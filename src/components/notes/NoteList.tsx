@@ -1,5 +1,5 @@
 import { useCallback, useMemo, memo, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../platform";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { useNotes } from "../../context/NotesContext";
 import {
@@ -16,12 +16,13 @@ import {
 import { cleanTitle } from "../../lib/utils";
 import * as notesService from "../../services/notes";
 import { FolderTreeView } from "./FolderTreeView";
+import { TrashList } from "./TrashList";
 import {
   PinIcon,
   CopyIcon,
   TrashIcon,
 } from "../icons";
-import type { Settings } from "../../types/note";
+import type { NoteStatus, Settings } from "../../types/note";
 
 const menuItemClass =
   "px-3 py-1.5 text-sm text-text cursor-pointer outline-none hover:bg-bg-muted focus:bg-bg-muted flex items-center gap-2 rounded-sm";
@@ -71,6 +72,8 @@ interface NoteItemProps {
   modified: number;
   isSelected: boolean;
   isPinned: boolean;
+  status: NoteStatus;
+  tags: string[];
   onSelect: (id: string) => void;
   depth?: number;
   showFolderPrefix?: boolean;
@@ -83,6 +86,8 @@ export const NoteItem = memo(function NoteItem({
   modified,
   isSelected,
   isPinned,
+  status,
+  tags,
   onSelect,
   depth,
   showFolderPrefix = true,
@@ -117,6 +122,8 @@ export const NoteItem = memo(function NoteItem({
         meta={formatDate(modified)}
         isSelected={isSelected}
         isPinned={isPinned}
+        status={status !== "active" ? status : undefined}
+        tags={tags}
         onClick={handleClick}
       />
     </div>
@@ -131,6 +138,8 @@ interface NoteItemWithMenuProps {
   modified: number;
   isSelected: boolean;
   isPinned: boolean;
+  status: NoteStatus;
+  tags: string[];
   onSelect: (id: string) => void;
   onPin: (id: string) => Promise<void>;
   onUnpin: (id: string) => Promise<void>;
@@ -146,6 +155,8 @@ const NoteItemWithMenu = memo(function NoteItemWithMenu({
   modified,
   isSelected,
   isPinned,
+  status,
+  tags,
   onSelect,
   onPin,
   onUnpin,
@@ -185,6 +196,8 @@ const NoteItemWithMenu = memo(function NoteItemWithMenu({
             modified={modified}
             isSelected={isSelected}
             isPinned={isPinned}
+            status={status}
+            tags={tags}
             onSelect={onSelect}
           />
         </div>
@@ -241,6 +254,8 @@ export function NoteList({
 }: NoteListProps) {
   const {
     notes,
+    visibleNotes,
+    activeFilter,
     selectedNoteId,
     selectNote,
     deleteNote,
@@ -297,15 +312,10 @@ export function NoteList({
   // Memoize display items to prevent recalculation on every render
   const displayItems = useMemo(() => {
     if (searchQuery.trim()) {
-      return searchResults.map((r) => ({
-        id: r.id,
-        title: r.title,
-        preview: r.preview,
-        modified: r.modified,
-      }));
+      return searchResults;
     }
-    return notes;
-  }, [searchQuery, searchResults, notes]);
+    return visibleNotes;
+  }, [searchQuery, searchResults, visibleNotes]);
 
   // Listen for focus request from editor (when Escape is pressed)
   useEffect(() => {
@@ -349,16 +359,21 @@ export function NoteList({
     );
   }
 
+  // Trash is a separate collection, not a filtered note list.
+  if (activeFilter.type === "trash" && !isSearching) {
+    return <TrashList />;
+  }
+
   if (displayItems.length === 0) {
     return (
       <div className="p-4 text-center text-sm text-text-muted select-none">
-        No notes yet
+        No notes here yet
       </div>
     );
   }
 
-  // Show folder tree view when folders enabled and not searching
-  if (foldersEnabled && !isSearching) {
+  // Show folder tree view when folders enabled, unfiltered and not searching
+  if (foldersEnabled && !isSearching && activeFilter.type === "all") {
     return (
       <>
         <FolderTreeView
@@ -377,10 +392,9 @@ export function NoteList({
         >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Delete note?</AlertDialogTitle>
+              <AlertDialogTitle>Move note to trash?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will permanently delete the note and all its content. This
-                action cannot be undone.
+                The note will be moved to the trash. You can restore it later.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -412,6 +426,8 @@ export function NoteList({
             modified={item.modified}
             isSelected={selectedNoteId === item.id}
             isPinned={pinnedIds.has(item.id)}
+            status={item.status}
+            tags={item.tags}
             onSelect={selectNote}
             onPin={pinNote}
             onUnpin={unpinNote}
@@ -426,16 +442,15 @@ export function NoteList({
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete note?</AlertDialogTitle>
+            <AlertDialogTitle>Move note to trash?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the note and all its content. This
-              action cannot be undone.
+              The note will be moved to the trash. You can restore it later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteConfirm}>
-              Delete
+              Move to Trash
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

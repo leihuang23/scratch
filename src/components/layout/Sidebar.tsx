@@ -23,25 +23,25 @@ import {
   FolderPlusIcon,
   NoteIcon,
 } from "../icons";
-import { mod, shift, isMac, isWindows } from "../../lib/platform";
+import { mod, shift, isMac } from "../../lib/platform";
+import { filterLabel } from "../../lib/library";
 import * as notesService from "../../services/notes";
 import { FolderNameDialog } from "../notes/FolderNameDialog";
 
-interface SidebarProps {
-  onOpenSettings?: () => void;
-}
-
-export function Sidebar({ onOpenSettings }: SidebarProps) {
+export function Sidebar() {
   const {
     createNote,
     createFolder,
-    notes,
+    visibleNotes,
+    trash,
     search,
     searchQuery,
+    searchResults,
     clearSearch,
     selectedNoteId,
     moveNote,
     moveFolder,
+    activeFilter,
   } = useNotes();
   const [searchOpen, setSearchOpen] = useState(false);
   const [inputValue, setInputValue] = useState(searchQuery);
@@ -303,6 +303,14 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
       window.removeEventListener("create-new-folder", handleCreateFolder);
   }, [selectedNoteId]);
 
+  const isSearchMode = searchQuery.trim().length > 0;
+  const headerTitle = isSearchMode ? "Search" : filterLabel(activeFilter);
+  const headerCount = isSearchMode
+    ? searchResults.length
+    : activeFilter.type === "trash"
+      ? trash.length
+      : visibleNotes.length;
+
   return (
     <DndContext
       sensors={sensors}
@@ -312,12 +320,13 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
     >
     <div className="relative w-full h-full bg-bg-secondary border-r border-border flex flex-col select-none">
       {/* Drag region */}
-      {!isWindows && <div className="h-11 shrink-0" data-tauri-drag-region></div>}
-      <div className={`flex items-center justify-between pl-4 pr-3 pb-2 border-b border-border shrink-0${isWindows ? " pt-2" : ""}`}>
+      <div className="flex items-center justify-between pl-4 pr-3 py-2 border-b border-border shrink-0">
         <div className="flex items-center gap-1">
-          <div className="font-medium text-base">Notes</div>
+          <div className="font-medium text-base truncate max-w-44">
+            {headerTitle}
+          </div>
           <div className="text-text-muted font-medium text-2xs min-w-4.75 h-4.75 flex items-center justify-center px-1 bg-bg-muted rounded-sm mt-0.5 pt-px">
-            {notes.length}
+            {headerCount}
           </div>
         </div>
         <div className="flex items-center gap-px">
@@ -420,8 +429,8 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
         />
       </div>
 
-      {/* Footer with git status, commit, and settings */}
-      <Footer onOpenSettings={onOpenSettings} />
+      {/* Footer with git status and actions */}
+      <Footer />
 
       {/* Folder name dialog */}
       <FolderNameDialog

@@ -1,52 +1,37 @@
+import fs from "node:fs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { tokenPath } from "./server/paths.mjs";
 
-// @ts-expect-error process is a nodejs global
-const host = process.env.TAURI_DEV_HOST;
-
-// https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig({
   plugins: [react(), tailwindcss()],
-
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
-    hmr: host
-      ? {
-          protocol: "ws",
-          host,
-          port: 1421,
-        }
-      : undefined,
-    watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+    host: false,
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:4173",
+        timeout: 0,
+        proxyTimeout: 0,
+        configure(proxy) {
+          proxy.on("proxyReq", (proxyReq) => {
+            if (!fs.existsSync(tokenPath())) return;
+            proxyReq.setHeader("x-scratch-token", fs.readFileSync(tokenPath(), "utf8").trim());
+          });
+        },
+      },
     },
   },
-
-  // Production build optimizations
   build: {
-    // Target compatible with Tauri WebViews across platforms:
-    // - macOS: WebKit (Safari 13+)
-    // - Windows: WebView2 (Chromium-based)
-    // - Linux: WebKitGTK
     target: ["es2021", "chrome105", "safari14"],
-    // Use esbuild for fast minification
     minify: "esbuild",
-    // Optimize chunk splitting
     rollupOptions: {
       output: {
-        // Manual chunk splitting for better caching
         manualChunks: {
-          // TipTap and related editor libraries
-          "tiptap": [
+          tiptap: [
             "@tiptap/react",
             "@tiptap/starter-kit",
             "@tiptap/markdown",
@@ -61,28 +46,14 @@ export default defineConfig(async () => ({
             "@tiptap/extension-table-header",
             "@tiptap/extension-code-block-lowlight",
           ],
-          // Syntax highlighting
-          "highlight": ["lowlight", "highlight.js"],
-          // React core
-          "react-vendor": ["react", "react-dom"],
-          // Tauri APIs
-          "tauri": [
-            "@tauri-apps/api",
-            "@tauri-apps/plugin-dialog",
-            "@tauri-apps/plugin-opener",
-          ],
+          highlight: ["lowlight", "highlight.js"],
         },
       },
     },
-    // Enable source maps for debugging (optional, can disable for smaller builds)
     sourcemap: false,
-    // Increase chunk size warning limit (TipTap is large)
     chunkSizeWarningLimit: 1000,
   },
-
-  // Optimize dependencies
   optimizeDeps: {
-    // Pre-bundle these dependencies for faster dev startup
     include: [
       "react",
       "react-dom",
@@ -92,4 +63,4 @@ export default defineConfig(async () => ({
       "lowlight",
     ],
   },
-}));
+});

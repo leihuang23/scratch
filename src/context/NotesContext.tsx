@@ -8,15 +8,27 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { listen } from "@tauri-apps/api/event";
-import type { Note, NoteMetadata } from "../types/note";
+import { listen } from "../platform";
+import type {
+  Note,
+  NoteFilter,
+  NoteMetadata,
+  NoteStatus,
+  TrashEntry,
+} from "../types/note";
 import * as notesService from "../services/notes";
 import type { SearchResult } from "../services/notes";
+import { matchesFilter } from "../lib/library";
+import { toast } from "sonner";
 
 // Separate contexts to prevent unnecessary re-renders
 // Data context: changes frequently, only subscribed by components that need the data
 interface NotesDataContextValue {
   notes: NoteMetadata[];
+  /** Notes matching the active library filter (notebook, status, tag). */
+  visibleNotes: NoteMetadata[];
+  activeFilter: NoteFilter;
+  trash: TrashEntry[];
   selectedNoteId: string | null;
   currentNote: Note | null;
   notesFolder: string | null;
@@ -48,9 +60,16 @@ interface NotesActionsContextValue {
   createNoteInFolder: (folderPath: string) => Promise<void>;
   createFolder: (parentPath: string, name: string) => Promise<void>;
   deleteFolder: (path: string) => Promise<void>;
-  renameFolder: (oldPath: string, newName: string) => Promise<void>;
+  renameFolder: (oldPath: string, newName: string) => Promise<string>;
   moveNote: (id: string, targetFolder: string) => Promise<void>;
   moveFolder: (path: string, targetParent: string) => Promise<void>;
+  setActiveFilter: (filter: NoteFilter) => void;
+  setNoteStatus: (id: string, status: NoteStatus | null) => Promise<void>;
+  setNoteTags: (id: string, tags: string[]) => Promise<void>;
+  restoreTrashNote: (key: string) => Promise<void>;
+  deleteTrashNotePermanently: (key: string) => Promise<void>;
+  emptyTrash: () => Promise<void>;
+  refreshTrash: () => Promise<void>;
 }
 
 const NotesDataContext = createContext<NotesDataContextValue | null>(null);
@@ -58,6 +77,10 @@ const NotesActionsContext = createContext<NotesActionsContextValue | null>(null)
 
 export function NotesProvider({ children }: { children: ReactNode }) {
   const [notes, setNotes] = useState<NoteMetadata[]>([]);
+  const [activeFilter, setActiveFilterState] = useState<NoteFilter>({
+    type: "all",
+  });
+  const [trash, setTrash] = useState<TrashEntry[]>([]);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [currentNote, setCurrentNote] = useState<Note | null>(null);
   const [notesFolder, setNotesFolderState] = useState<string | null>(null);
@@ -97,6 +120,26 @@ export function NotesProvider({ children }: { children: ReactNode }) {
     }
   }, [notesFolder]);
 
+  const refreshTrash = useCallback(async () => {
+    try {
+      setTrash(await notesService.listTrash());
+    } catch (err) {
+      console.error("Failed to load trash:", err);
+    }
+  }, []);
+
+  const visibleNotes = useMemo(
+    () => notes.filter((note) => matchesFilter(note, activeFilter)),
+    [notes, activeFilter],
+  );
+
+  const setActiveFilter = useCallback((filter: NoteFilter) => {
+    setActiveFilterState(filter);
+    // Search is a separate mode; switching the library view resets it.
+    setSearchQuery("");
+    setSearchResults([]);
+  }, []);
+
   // Debounced refresh - coalesces rapid saves into a single refresh
   const scheduleRefresh = useCallback(() => {
     if (refreshTimeoutRef.current) {
@@ -110,6 +153,8 @@ export function NotesProvider({ children }: { children: ReactNode }) {
 
   const selectNote = useCallback(async (id: string) => {
     const requestId = ++selectRequestIdRef.current;
+    // Captured before the optimistic selection so a failed read can restore it.
+    const previousSelectedId = selectedNoteIdRef.current;
     try {
       if (pendingNewNoteIdRef.current !== id) {
         pendingNewNoteIdRef.current = null;
@@ -131,7 +176,13 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       setCurrentNote(note);
     } catch (err) {
       if (requestId !== selectRequestIdRef.current) return;
-      setError(err instanceof Error ? err.message : "Failed to load note");
+      // Without this the editor would show a loading spinner forever, because
+      // selectedNoteId is set but currentNote never arrives.
+      setSelectedNoteId(previousSelectedId);
+      setHasExternalChanges(false);
+      const message = err instanceof Error ? err.message : "Failed to load note";
+      setError(message);
+      toast.error("Failed to open note", { description: message });
     }
   }, []);
 
@@ -149,9 +200,11 @@ export function NotesProvider({ children }: { children: ReactNode }) {
 
   const createNote = useCallback(async () => {
     try {
-      // Derive target folder from the selected note's parent path
+      // Prefer the open notebook, otherwise the selected note's folder.
       let targetFolder: string | undefined;
-      if (selectedNoteIdRef.current) {
+      if (activeFilter.type === "notebook") {
+        targetFolder = activeFilter.path || undefined;
+      } else if (selectedNoteIdRef.current) {
         const lastSlash = selectedNoteIdRef.current.lastIndexOf("/");
         if (lastSlash > 0) {
           targetFolder = selectedNoteIdRef.current.substring(0, lastSlash);
@@ -174,7 +227,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create note");
     }
-  }, [refreshNotes]);
+  }, [refreshNotes, activeFilter]);
 
   const consumePendingNewNote = useCallback((id: string) => {
     if (pendingNewNoteIdRef.current !== id) {
@@ -251,23 +304,13 @@ export function NotesProvider({ children }: { children: ReactNode }) {
     [currentNote, scheduleRefresh]
   );
 
+  /** Soft delete: the note is moved into the trash and can be restored. */
   const deleteNote = useCallback(
     async (id: string) => {
       try {
         await notesService.deleteNote(id);
 
-        // Clean up pinned status for deleted note
-        const currentSettings = await notesService.getSettings();
-        const pinnedIds = currentSettings.pinnedNoteIds || [];
-        if (pinnedIds.includes(id)) {
-          const updatedSettings = {
-            ...currentSettings,
-            pinnedNoteIds: pinnedIds.filter((pinId) => pinId !== id),
-          };
-          await notesService.updateSettings(updatedSettings);
-        }
-
-        // Only clear selection if we're deleting the currently selected note
+        // Only clear selection if we're trashing the currently selected note
         setSelectedNoteId((prevId) => {
           if (prevId === id) {
             setCurrentNote(null);
@@ -275,13 +318,74 @@ export function NotesProvider({ children }: { children: ReactNode }) {
           }
           return prevId;
         });
-        await refreshNotes();
+        await Promise.all([refreshNotes(), refreshTrash()]);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to delete note");
       }
     },
+    [refreshNotes, refreshTrash]
+  );
+
+  const setNoteStatus = useCallback(
+    async (id: string, status: NoteStatus | null) => {
+      try {
+        await notesService.setNoteStatus(id, status);
+        await refreshNotes();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to set status");
+      }
+    },
     [refreshNotes]
   );
+
+  const setNoteTags = useCallback(
+    async (id: string, tags: string[]) => {
+      try {
+        await notesService.setNoteTags(id, tags);
+        await refreshNotes();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to update tags");
+      }
+    },
+    [refreshNotes]
+  );
+
+  const restoreTrashNote = useCallback(
+    async (key: string) => {
+      try {
+        const restoredId = await notesService.restoreNote(key);
+        setActiveFilterState({ type: "all" });
+        await Promise.all([refreshNotes(), refreshTrash()]);
+        await selectNote(restoredId);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to restore note");
+      }
+    },
+    [refreshNotes, refreshTrash, selectNote]
+  );
+
+  const deleteTrashNotePermanently = useCallback(
+    async (key: string) => {
+      try {
+        await notesService.deleteTrashNote(key);
+        await refreshTrash();
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to delete note forever"
+        );
+      }
+    },
+    [refreshTrash]
+  );
+
+  const emptyTrash = useCallback(async () => {
+    try {
+      await notesService.emptyTrash();
+      await refreshTrash();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to empty trash");
+    }
+  }, [refreshTrash]);
 
   const duplicateNote = useCallback(
     async (id: string) => {
@@ -377,9 +481,29 @@ export function NotesProvider({ children }: { children: ReactNode }) {
         setError(
           err instanceof Error ? err.message : "Failed to create folder"
         );
+        throw err;
       }
     },
     [refreshNotes]
+  );
+
+  /** Keep the open notebook filter valid when its folder is renamed, moved or deleted. */
+  const remapFilterForPath = useCallback(
+    (oldPath: string, newPath: string | null) => {
+      setActiveFilterState((filter) => {
+        if (filter.type !== "notebook") return filter;
+        const current = filter.path;
+        if (current !== oldPath && !current.startsWith(`${oldPath}/`)) {
+          return filter;
+        }
+        if (newPath === null) return { type: "all" };
+        return {
+          type: "notebook",
+          path: `${newPath}${current.slice(oldPath.length)}`,
+        };
+      });
+    },
+    [],
   );
 
   const deleteFolderAction = useCallback(
@@ -394,27 +518,23 @@ export function NotesProvider({ children }: { children: ReactNode }) {
           }
           return prevId;
         });
+        remapFilterForPath(path, null);
         await refreshNotes();
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Failed to delete folder"
         );
+        throw err;
       }
     },
-    [refreshNotes]
+    [refreshNotes, remapFilterForPath]
   );
 
   const renameFolderAction = useCallback(
     async (oldPath: string, newName: string) => {
       try {
-        await notesService.renameFolder(oldPath, newName);
-
-        // Compute new folder path
-        const lastSlash = oldPath.lastIndexOf("/");
-        const newPath =
-          lastSlash >= 0
-            ? `${oldPath.substring(0, lastSlash)}/${newName}`
-            : newName;
+        // The server sanitizes the name, so use the path it actually created.
+        const newPath = await notesService.renameFolder(oldPath, newName);
         const oldPrefix = oldPath + "/";
         const newPrefix = newPath + "/";
 
@@ -432,14 +552,17 @@ export function NotesProvider({ children }: { children: ReactNode }) {
           return prevId;
         });
 
+        remapFilterForPath(oldPath, newPath);
         await refreshNotes();
+        return newPath;
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Failed to rename folder"
         );
+        throw err;
       }
     },
-    [refreshNotes]
+    [refreshNotes, remapFilterForPath]
   );
 
   const moveNoteAction = useCallback(
@@ -495,12 +618,14 @@ export function NotesProvider({ children }: { children: ReactNode }) {
           return prevId;
         });
 
+        remapFilterForPath(path, newPath);
         await refreshNotes();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to move folder");
+        throw err;
       }
     },
-    [refreshNotes]
+    [refreshNotes, remapFilterForPath]
   );
 
   const setNotesFolder = useCallback(async (path: string) => {
@@ -523,8 +648,13 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       setNotesFolderState(path);
       setSelectedNoteId(null);
       setCurrentNote(null);
-      const notesList = await notesService.listNotes();
+      setActiveFilterState({ type: "all" });
+      const [notesList, trashList] = await Promise.all([
+        notesService.listNotes(),
+        notesService.listTrash(),
+      ]);
       setNotes(notesList);
+      setTrash(trashList);
       await notesService.startFileWatcher();
     } catch (err) {
       setError(
@@ -553,13 +683,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
           note.preview.toLowerCase().includes(queryLower),
       )
       .slice(0, 20)
-      .map((note) => ({
-        id: note.id,
-        title: note.title,
-        preview: note.preview,
-        modified: note.modified,
-        score: 0,
-      }));
+      .map((note) => ({ ...note, score: 0 }));
 
     // Show instant local matches immediately; clear stale results if none match.
     setSearchResults(instantResults);
@@ -604,8 +728,12 @@ export function NotesProvider({ children }: { children: ReactNode }) {
         const folder = await notesService.getNotesFolder();
         setNotesFolderState(folder);
         if (folder) {
-          const notesList = await notesService.listNotes();
+          const [notesList, trashList] = await Promise.all([
+            notesService.listNotes(),
+            notesService.listTrash(),
+          ]);
           setNotes(notesList);
+          setTrash(trashList);
           // Start file watcher
           await notesService.startFileWatcher();
         }
@@ -684,6 +812,9 @@ export function NotesProvider({ children }: { children: ReactNode }) {
   const dataValue = useMemo<NotesDataContextValue>(
     () => ({
       notes,
+      visibleNotes,
+      activeFilter,
+      trash,
       selectedNoteId,
       currentNote,
       notesFolder,
@@ -697,6 +828,9 @@ export function NotesProvider({ children }: { children: ReactNode }) {
     }),
     [
       notes,
+      visibleNotes,
+      activeFilter,
+      trash,
       selectedNoteId,
       currentNote,
       notesFolder,
@@ -733,6 +867,13 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       renameFolder: renameFolderAction,
       moveNote: moveNoteAction,
       moveFolder: moveFolderAction,
+      setActiveFilter,
+      setNoteStatus,
+      setNoteTags,
+      restoreTrashNote,
+      deleteTrashNotePermanently,
+      emptyTrash,
+      refreshTrash,
     }),
     [
       selectNote,
@@ -755,6 +896,13 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       renameFolderAction,
       moveNoteAction,
       moveFolderAction,
+      setActiveFilter,
+      setNoteStatus,
+      setNoteTags,
+      restoreTrashNote,
+      deleteTrashNotePermanently,
+      emptyTrash,
+      refreshTrash,
     ]
   );
 

@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { NotesProvider, useNotes } from "./context/NotesContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "./platform";
 import { GitProvider } from "./context/GitContext";
 import { TooltipProvider, Toaster } from "./components/ui";
 import { Sidebar } from "./components/layout/Sidebar";
+import { NavPanel } from "./components/layout/NavPanel";
 import { SidebarResizeHandle } from "./components/layout/SidebarResizeHandle";
 import { SIDEBAR_DEFAULT_PX } from "./lib/sidebar";
 import { Editor } from "./components/editor/Editor";
@@ -13,24 +14,9 @@ import type { Editor as TiptapEditor } from "@tiptap/react";
 import { FolderPicker } from "./components/layout/FolderPicker";
 import { CommandPalette } from "./components/command-palette/CommandPalette";
 import { SettingsPage } from "./components/settings";
-import {
-  SpinnerIcon,
-  ClaudeIcon,
-  CodexIcon,
-  OpenCodeIcon,
-  OllamaIcon,
-} from "./components/icons";
-import { AiEditModal } from "./components/ai/AiEditModal";
-import { AiResponseToast } from "./components/ai/AiResponseToast";
+import { SpinnerIcon } from "./components/icons";
 import { KeyboardShortcutsModal } from "./components/shortcuts/KeyboardShortcutsModal";
 import { PreviewApp } from "./components/preview/PreviewApp";
-import {
-  check as checkForUpdate,
-  type Update,
-} from "@tauri-apps/plugin-updater";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import * as aiService from "./services/ai";
-import type { AiProvider } from "./services/ai";
 import { isMac, isWindows } from "./lib/platform";
 
 // Detect preview mode from URL search params
@@ -55,7 +41,7 @@ function AppContent() {
     isLoading,
     createNote,
     duplicateNote,
-    notes,
+    visibleNotes,
     selectedNoteId,
     selectNote,
     searchQuery,
@@ -71,12 +57,9 @@ function AppContent() {
   currentNoteRef.current = currentNote;
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [view, setView] = useState<ViewState>("notes");
-  const [sidebarVisible, setSidebarVisible] = useState(true);
-  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [navPanelVisible, setNavPanelVisible] = useState(true);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [aiEditing, setAiEditing] = useState(false);
-  const [focusMode, setFocusMode] = useState(false);
-  const [aiProvider, setAiProvider] = useState<AiProvider>("claude");
+  const [zenMode, setZenMode] = useState(false);
   const editorRef = useRef<TiptapEditor | null>(null);
 
   // Listen for set-notes-folder event from CLI (scratch .)
@@ -97,20 +80,21 @@ function AppContent() {
     };
   }, [syncNotesFolder, reloadSettings]);
 
-  const toggleSidebar = useCallback(() => {
-    setSidebarVisible((prev) => !prev);
+  const toggleNavPanel = useCallback(() => {
+    setNavPanelVisible((prev) => !prev);
   }, []);
 
-  const toggleFocusMode = useCallback(() => {
-    setFocusMode((prev) => {
-      // Don't enter focus mode without a selected note
+  const toggleZenMode = useCallback(() => {
+    setZenMode((prev) => {
+      // Don't enter zen mode without a selected note
       if (!prev && !selectedNoteId) return prev;
-      if (prev) {
-        // Exiting focus mode — always restore sidebar
-        setSidebarVisible(true);
-      }
       return !prev;
     });
+  }, [selectedNoteId]);
+
+  // Zen mode needs an open note; leave it when the note goes away.
+  useEffect(() => {
+    if (!selectedNoteId) setZenMode(false);
   }, [selectedNoteId]);
 
   const toggleSettings = useCallback(() => {
@@ -121,80 +105,10 @@ function AppContent() {
     setView("notes");
   }, []);
 
-  // Go back to command palette from AI modal
-  const handleBackToPalette = useCallback(() => {
-    setAiModalOpen(false);
-    setPaletteOpen(true);
-  }, []);
-
-  // AI Edit handler
-  const handleAiEdit = useCallback(
-    async (prompt: string, ollamaModel?: string) => {
-      if (!currentNote) {
-        toast.error("No note selected");
-        return;
-      }
-
-      setAiEditing(true);
-
-      try {
-        let result: aiService.AiExecutionResult;
-        if (aiProvider === "codex") {
-          result = await aiService.executeCodexEdit(currentNote.path, prompt);
-        } else if (aiProvider === "opencode") {
-          result = await aiService.executeOpenCodeEdit(currentNote.path, prompt);
-        } else if (aiProvider === "ollama") {
-          result = await aiService.executeOllamaEdit(
-            currentNote.path,
-            prompt,
-            ollamaModel || "qwen3:8b",
-          );
-        } else {
-          result = await aiService.executeClaudeEdit(currentNote.path, prompt);
-        }
-
-        // Reload the current note from disk
-        await reloadCurrentNote();
-
-        // Show results
-        if (result.success) {
-          // Close modal after success
-          setAiModalOpen(false);
-
-          // Show success toast with provider response
-          toast(
-            <AiResponseToast output={result.output} provider={aiProvider} />,
-            {
-              duration: Infinity,
-              closeButton: true,
-              className: "!min-w-[450px] !max-w-[600px]",
-            },
-          );
-        } else {
-          toast.error(
-            <div className="space-y-1">
-              <div className="font-medium">AI Edit Failed</div>
-              <div className="text-xs">{result.error || "Unknown error"}</div>
-            </div>,
-            { duration: Infinity, closeButton: true },
-          );
-        }
-      } catch (error) {
-        console.error("[AI] Error:", error);
-        toast.error(
-          `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
-        );
-      } finally {
-        setAiEditing(false);
-      }
-    },
-    [aiProvider, currentNote, reloadCurrentNote],
-  );
-
   // Memoize display items to prevent unnecessary recalculations
   const displayItems = useMemo(() => {
-    return searchQuery.trim() ? searchResults : notes;
-  }, [searchQuery, searchResults, notes]);
+    return searchQuery.trim() ? searchResults : visibleNotes;
+  }, [searchQuery, searchResults, visibleNotes]);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -244,10 +158,10 @@ function AppContent() {
         return;
       }
 
-      // Cmd+Shift+Enter - Toggle focus mode
+      // Cmd+Shift+Enter - Toggle zen mode
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "Enter") {
         e.preventDefault();
-        toggleFocusMode();
+        toggleZenMode();
         return;
       }
 
@@ -262,10 +176,10 @@ function AppContent() {
         return;
       }
 
-      // Escape exits focus mode when not in editor
-      if (e.key === "Escape" && focusMode && !isInEditor) {
+      // Escape exits zen mode when not in editor
+      if (e.key === "Escape" && zenMode && !isInEditor) {
         e.preventDefault();
-        toggleFocusMode();
+        toggleZenMode();
         return;
       }
 
@@ -309,15 +223,15 @@ function AppContent() {
         e.key.toLowerCase() === "f"
       ) {
         e.preventDefault();
-        setSidebarVisible(true);
+        setZenMode(false);
         window.dispatchEvent(new CustomEvent("open-sidebar-search"));
         return;
       }
 
-      // Cmd+\ - Toggle sidebar
+      // Cmd+\ - Toggle library panel
       if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
         e.preventDefault();
-        toggleSidebar();
+        toggleNavPanel();
         return;
       }
 
@@ -439,9 +353,9 @@ function AppContent() {
     selectedNoteId,
     selectNote,
     toggleSettings,
-    toggleSidebar,
-    toggleFocusMode,
-    focusMode,
+    toggleNavPanel,
+    toggleZenMode,
+    zenMode,
     view,
     setInterfaceZoom,
   ]);
@@ -474,17 +388,28 @@ function AppContent() {
         ) : (
           <>
             <div
-              data-sidebar
-              style={{ width: (!sidebarVisible || focusMode) ? 0 : `var(--sidebar-width, ${SIDEBAR_DEFAULT_PX}px)` }}
-              className={`relative transition-all duration-500 ease-out overflow-hidden ${!sidebarVisible || focusMode ? "opacity-0 -translate-x-4 pointer-events-none" : "opacity-100 translate-x-0"}`}
+              data-nav-panel
+              className={`shrink-0 h-full overflow-hidden transition-[width,opacity] duration-500 ease-out ${
+                !navPanelVisible || zenMode ? "w-0 opacity-0" : "w-56 opacity-100"
+              }`}
             >
-              <Sidebar onOpenSettings={toggleSettings} />
-              {sidebarVisible && !focusMode && <SidebarResizeHandle />}
+              <div className="w-56 h-full">
+                <NavPanel onOpenSettings={toggleSettings} />
+              </div>
+            </div>
+            <div
+              data-sidebar
+              style={{ width: zenMode ? 0 : `var(--sidebar-width, ${SIDEBAR_DEFAULT_PX}px)` }}
+              className={`relative transition-all duration-500 ease-out overflow-hidden ${zenMode ? "opacity-0 -translate-x-4 pointer-events-none" : "opacity-100 translate-x-0"}`}
+            >
+              <Sidebar />
+              {!zenMode && <SidebarResizeHandle />}
             </div>
             <Editor
-              onToggleSidebar={toggleSidebar}
-              sidebarVisible={sidebarVisible}
-              focusMode={focusMode}
+              onToggleNavPanel={toggleNavPanel}
+              navPanelVisible={navPanelVisible}
+              onToggleZenMode={toggleZenMode}
+              zenMode={zenMode}
               onEditorReady={(editor) => {
                 editorRef.current = editor;
               }}
@@ -493,14 +418,10 @@ function AppContent() {
         )}
       </div>
 
-      {/* Shared backdrop for command palette and AI modal */}
-      {(paletteOpen || aiModalOpen) && (
+      {paletteOpen && (
         <div
           className="fixed inset-0 bg-text/50 backdrop-blur-sm z-40 animate-fade-in"
-          onClick={() => {
-            if (paletteOpen) handleClosePalette();
-            if (aiModalOpen) setAiModalOpen(false);
-          }}
+          onClick={handleClosePalette}
         />
       )}
 
@@ -514,154 +435,21 @@ function AppContent() {
         onClose={handleClosePalette}
         onOpenSettings={toggleSettings}
         onOpenShortcuts={() => setShortcutsOpen(true)}
-        onOpenAiModal={(provider) => {
-          setAiProvider(provider);
-          setAiModalOpen(true);
-        }}
-        focusMode={focusMode}
-        onToggleFocusMode={toggleFocusMode}
+        zenMode={zenMode}
+        onToggleZenMode={toggleZenMode}
         editorRef={editorRef}
       />
-      <AiEditModal
-        open={aiModalOpen}
-        provider={aiProvider}
-        onBack={handleBackToPalette}
-        onExecute={handleAiEdit}
-        isExecuting={aiEditing}
-      />
-
-      {/* AI Editing Overlay */}
-      {aiEditing && (
-        <div className="fixed inset-0 bg-bg/50 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="flex items-center gap-2">
-            {aiProvider === "codex" ? (
-              <CodexIcon className="w-4.5 h-4.5 fill-text-muted animate-spin-slow" />
-            ) : aiProvider === "opencode" ? (
-              <OpenCodeIcon className="w-4.5 h-4.5 fill-text-muted animate-pulse-gentle" />
-            ) : aiProvider === "ollama" ? (
-              <OllamaIcon className="w-4.5 h-4.5 fill-text-muted animate-bounce-gentle" />
-            ) : (
-              <ClaudeIcon className="w-4.5 h-4.5 fill-text-muted animate-spin-slow" />
-            )}
-            <div className="text-sm font-medium text-text">
-              {aiProvider === "codex"
-                ? "Codex is editing your note..."
-                : aiProvider === "opencode"
-                  ? "OpenCode is editing your note..."
-                : aiProvider === "ollama"
-                  ? "Ollama is editing your note..."
-                  : "Claude is editing your note..."}
-            </div>
-          </div>
-        </div>
-      )}
     </>
-  );
-}
-
-// Shared update check — used by startup and manual "Check for Updates"
-async function showUpdateToast(): Promise<"update" | "no-update" | "error"> {
-  try {
-    const update = await checkForUpdate();
-    if (update) {
-      toast(<UpdateToast update={update} toastId="update-toast" />, {
-        id: "update-toast",
-        duration: Infinity,
-        closeButton: true,
-      });
-      return "update";
-    }
-    return "no-update";
-  } catch (err) {
-    // Network errors and 404s (no release published yet) are not real failures
-    const msg = String(err);
-    if (
-      msg.includes("404") ||
-      msg.includes("network") ||
-      msg.includes("Could not fetch")
-    ) {
-      return "no-update";
-    }
-    console.error("Update check failed:", err);
-    return "error";
-  }
-}
-
-export { showUpdateToast };
-
-function UpdateToast({
-  update,
-  toastId,
-}: {
-  update: Update;
-  toastId: string | number;
-}) {
-  const [installing, setInstalling] = useState(false);
-
-  const handleUpdate = async () => {
-    setInstalling(true);
-    try {
-      await update.downloadAndInstall();
-      toast.dismiss(toastId);
-      toast.success("Update installed! Restart Scratch to apply.", {
-        duration: Infinity,
-        closeButton: true,
-      });
-    } catch (err) {
-      console.error("Update failed:", err);
-      toast.error("Update failed. Please try again later.");
-      setInstalling(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="font-medium text-sm">
-        Update Available: v{update.version}
-      </div>
-      {update.body && (
-        <div className="text-xs text-text-muted line-clamp-3">
-          {update.body}
-        </div>
-      )}
-      <button
-        onClick={handleUpdate}
-        disabled={installing}
-        className="self-start mt-1 text-xs font-medium px-3 py-1.5 rounded-md bg-text text-bg hover:opacity-90 disabled:opacity-50 transition-opacity"
-      >
-        {installing ? "Installing..." : "Update Now"}
-      </button>
-    </div>
   );
 }
 
 function App() {
   const { isPreview, previewFile } = useMemo(getWindowMode, []);
 
-  // Cmd/Ctrl+W — close window (works in both preview and folder mode)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "w") {
-        e.preventDefault();
-        getCurrentWindow().close().catch(console.error);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  // Add platform class for OS-specific styling (e.g., keyboard shortcuts)
   useEffect(() => {
     const os = isMac ? "mac" : isWindows ? "windows" : "linux";
     document.documentElement.classList.add(`platform-${os}`);
   }, []);
-
-  // Check for app updates on startup (folder mode only)
-  useEffect(() => {
-    if (isPreview) return;
-    const timer = setTimeout(() => showUpdateToast(), 3000);
-    return () => clearTimeout(timer);
-  }, [isPreview]);
 
   // Preview mode: lightweight editor without sidebar, search, git
   if (isPreview && previewFile) {

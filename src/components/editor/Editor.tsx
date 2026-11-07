@@ -32,12 +32,9 @@ import {
   TextSelection,
 } from "@tiptap/pm/state";
 import tippy, { type Instance as TippyInstance } from "tippy.js";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { join } from "@tauri-apps/api/path";
+import { invoke, resolveAssetUrl } from "../../platform";
 import { toast } from "sonner";
-import { mod, alt, shift, isMac, isWindows } from "../../lib/platform";
+import { mod, alt, shift, isMac } from "../../lib/platform";
 
 // Prepend https:// if no protocol is present
 function normalizeUrl(url: string): string {
@@ -57,13 +54,13 @@ function isAllowedUrlScheme(url: string): boolean {
   }
 }
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
 import { useOptionalNotes } from "../../context/NotesContext";
 import { useTheme } from "../../context/ThemeContext";
 import { Frontmatter } from "./Frontmatter";
 import { BlockMathEditor } from "./BlockMathEditor";
 import { LinkEditor } from "./LinkEditor";
 import { SearchToolbar } from "./SearchToolbar";
+import { NoteMetaBar } from "./NoteMetaBar";
 import { SlashCommand } from "./SlashCommand";
 import { Wikilink, type WikilinkStorage } from "./Wikilink";
 import { WikilinkSuggestion } from "./WikilinkSuggestion";
@@ -107,6 +104,7 @@ import {
   MarkdownIcon,
   MarkdownOffIcon,
   FolderPlusIcon,
+  ZenIcon,
 } from "../icons";
 
 function formatDateTime(timestamp: number): string {
@@ -119,6 +117,44 @@ function formatDateTime(timestamp: number): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+/** Library toggle and zen mode. */
+function PanelControls({
+  onToggleNavPanel,
+  onToggleZenMode,
+  navPanelActive,
+}: {
+  onToggleNavPanel?: () => void;
+  onToggleZenMode?: () => void;
+  navPanelActive?: boolean;
+}) {
+  return (
+    <>
+      {onToggleNavPanel && (
+        <IconButton
+          onClick={onToggleNavPanel}
+          title={
+            navPanelActive
+              ? `Hide library (${mod}${isMac ? "" : "+"}\\)`
+              : `Show library (${mod}${isMac ? "" : "+"}\\)`
+          }
+          className="shrink-0"
+        >
+          <PanelLeftIcon className="w-4.5 h-4.5 stroke-[1.5]" />
+        </IconButton>
+      )}
+      {onToggleZenMode && (
+        <IconButton
+          onClick={onToggleZenMode}
+          title={`Zen mode (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}Enter)`}
+          className="shrink-0"
+        >
+          <ZenIcon className="w-4.5 h-4.5 stroke-[1.5]" />
+        </IconButton>
+      )}
+    </>
+  );
 }
 
 function focusAndSelectTitle(editor: TiptapEditor): boolean {
@@ -440,9 +476,10 @@ export interface PreviewModeData {
 }
 
 interface EditorProps {
-  onToggleSidebar?: () => void;
-  sidebarVisible?: boolean;
-  focusMode?: boolean;
+  onToggleNavPanel?: () => void;
+  onToggleZenMode?: () => void;
+  navPanelVisible?: boolean;
+  zenMode?: boolean;
   previewMode?: PreviewModeData;
   onEditorReady?: (editor: TiptapEditor | null) => void;
   onSaveToFolder?: () => void;
@@ -503,9 +540,10 @@ function blockIndexToPos(
 }
 
 export function Editor({
-  onToggleSidebar,
-  sidebarVisible,
-  focusMode,
+  onToggleNavPanel,
+  onToggleZenMode,
+  navPanelVisible,
+  zenMode,
   onEditorReady,
   previewMode,
   onSaveToFolder,
@@ -551,6 +589,11 @@ export function Editor({
   // Force re-render when selection changes to update toolbar active states
   const [, setSelectionKey] = useState(0);
   const [copyMenuOpen, setCopyMenuOpen] = useState(false);
+  const [tableContextMenu, setTableContextMenu] = useState<{
+    x: number;
+    y: number;
+    actions: { id: string; label: string; run?: () => void; separator?: boolean }[];
+  } | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   // Delay transition classes until after initial mount to avoid format bar height animation on note load
   const [hasTransitioned, setHasTransitioned] = useState(false);
@@ -561,9 +604,9 @@ export function Editor({
     }
   }, [hasTransitioned, currentNote]);
 
-  // Delay format bar / header transitions only when the sidebar needs to animate closed
-  const needsSidebarDelay = focusMode && sidebarVisible;
-  const isSidebarActive = sidebarVisible && !focusMode;
+  // Delay the format bar collapse so the top bar can animate away first.
+  const delayChrome = zenMode && navPanelVisible;
+  const isNavPanelActive = navPanelVisible && !zenMode;
   // Source mode state
   const [sourceMode, setSourceMode] = useState(false);
   const [sourceContent, setSourceContent] = useState("");
@@ -1193,10 +1236,7 @@ export function Editor({
 
                 // Get notes folder and construct absolute path using Tauri's join
                 const notesFolder = await invoke<string>("get_notes_folder");
-                const absolutePath = await join(notesFolder, relativePath);
-
-                // Convert to Tauri asset URL
-                const assetUrl = convertFileSrc(absolutePath);
+                const assetUrl = await resolveAssetUrl(notesFolder, relativePath);
 
                 // Insert image
                 editorRef.current
@@ -1418,7 +1458,7 @@ export function Editor({
           const rawHref = link.getAttribute("href") ?? "";
           const normalizedHref = normalizeUrl(rawHref);
           if (isAllowedUrlScheme(normalizedHref)) {
-            openUrl(normalizedHref).catch((error) =>
+            invoke("open_url_safe", { url: normalizedHref }).catch((error) =>
               console.error("Failed to open link:", error),
             );
           } else {
@@ -1735,34 +1775,28 @@ export function Editor({
   // Image handler
   const handleAddImage = useCallback(async () => {
     if (!editor) return;
-    const selected = await openDialog({
-      multiple: false,
-      filters: [
-        {
-          name: "Images",
-          extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"],
-        },
-      ],
+    const file = await new Promise<File | null>((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/png,image/jpeg,image/gif,image/webp,image/svg+xml";
+      input.onchange = () => resolve(input.files?.[0] ?? null);
+      input.click();
     });
-    if (selected) {
-      try {
-        // Copy image to assets folder and get relative path (assets/filename.ext)
-        const relativePath = await invoke<string>("copy_image_to_assets", {
-          sourcePath: selected as string,
-        });
-
-        // Get notes folder and construct absolute path using Tauri's join
-        const notesFolder = await invoke<string>("get_notes_folder");
-        const absolutePath = await join(notesFolder, relativePath);
-
-        // Convert to Tauri asset URL
-        const assetUrl = convertFileSrc(absolutePath);
-
-        // Insert image with asset URL
-        editor.chain().focus().setImage({ src: assetUrl }).run();
-      } catch (error) {
-        console.error("Failed to add image:", error);
-      }
+    if (!file) return;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      const relativePath = await invoke<string>("save_image_data", {
+        base64Data: btoa(binary),
+        filename: file.name,
+      });
+      const notesFolder = await invoke<string>("get_notes_folder");
+      const assetUrl = await resolveAssetUrl(notesFolder, relativePath);
+      editor.chain().focus().setImage({ src: assetUrl }).run();
+    } catch (error) {
+      console.error("Failed to add image:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to add image");
     }
   }, [editor]);
 
@@ -2147,12 +2181,6 @@ export function Editor({
     if (previewMode) {
       return (
         <div className="flex-1 flex flex-col bg-bg">
-          {!isWindows && (
-            <div
-              className="h-10 shrink-0 flex items-end px-4 pb-1"
-              data-tauri-drag-region
-            ></div>
-          )}
           <div className="flex-1 flex items-center justify-center">
             <SpinnerIcon className="w-6 h-6 text-text-muted animate-spin" />
           </div>
@@ -2164,12 +2192,6 @@ export function Editor({
     if (notesCtx?.selectedNoteId) {
       return (
         <div className="flex-1 flex flex-col bg-bg">
-          {!isWindows && (
-            <div
-              className="h-10 shrink-0 flex items-end px-4 pb-1"
-              data-tauri-drag-region
-            ></div>
-          )}
           <div className="flex-1 flex items-center justify-center">
             <SpinnerIcon className="w-6 h-6 text-text-muted animate-spin" />
           </div>
@@ -2179,14 +2201,15 @@ export function Editor({
 
     // Folder mode: show empty state with "New Note" button
     return (
-      <div className="flex-1 flex flex-col bg-bg">
-        {/* Drag region */}
-        {!isWindows && (
-          <div
-            className="h-10 shrink-0 flex items-end px-4 pb-1"
-            data-tauri-drag-region
-          ></div>
-        )}
+      <div className="flex-1 flex flex-col bg-bg relative">
+        <div
+          className={`absolute inset-x-0 top-0 h-11 flex items-center px-3 transition-opacity duration-400 ${zenMode ? "opacity-0 pointer-events-none" : "opacity-100"}`}
+        >
+          <PanelControls
+            onToggleNavPanel={onToggleNavPanel}
+            navPanelActive={isNavPanelActive}
+          />
+        </div>
         <div className="flex-1 flex items-center justify-center pb-8">
           <div className="text-center text-text-muted select-none">
             <div
@@ -2233,37 +2256,23 @@ export function Editor({
 
   return (
     <div className="flex-1 flex flex-col bg-bg overflow-hidden">
-      {/* Drag region with sidebar toggle, date and save status */}
+      {/* Top bar with panel controls, date and save status; collapses away in zen mode */}
       <div
-        className={cn(
-          "h-11 shrink-0 flex items-center justify-between px-3",
-          !isSidebarActive && !isWindows && "pl-22",
-        )}
-        data-tauri-drag-region
+        className={`shrink-0 flex items-center justify-between overflow-hidden transition-[height,opacity] duration-400 ease-out ${
+          zenMode ? "h-0 opacity-0 pointer-events-none" : "h-11 opacity-100"
+        }`}
       >
-        <div
-          className={`titlebar-no-drag flex items-center gap-1 min-w-0 transition-opacity duration-400 ${needsSidebarDelay ? "delay-200" : ""} ${focusMode ? "opacity-0 pointer-events-none" : "opacity-100"}`}
-        >
-          {onToggleSidebar && (
-            <IconButton
-              onClick={onToggleSidebar}
-              title={
-                isSidebarActive
-                  ? `Hide sidebar (${mod}${isMac ? "" : "+"}\\)`
-                  : `Show sidebar (${mod}${isMac ? "" : "+"}\\)`
-              }
-              className="shrink-0"
-            >
-              <PanelLeftIcon className="w-4.5 h-4.5 stroke-[1.5]" />
-            </IconButton>
-          )}
+        <div className="flex items-center gap-1 min-w-0">
+          <PanelControls
+            onToggleNavPanel={onToggleNavPanel}
+            onToggleZenMode={onToggleZenMode}
+            navPanelActive={isNavPanelActive}
+          />
           <span className="text-xs text-text-muted mb-px truncate">
             {formatDateTime(currentNote.modified)}
           </span>
         </div>
-        <div
-          className={`titlebar-no-drag flex items-center gap-px shrink-0 transition-opacity duration-400 ${needsSidebarDelay ? "delay-200" : ""} ${focusMode ? "opacity-0 pointer-events-none" : "opacity-100"}`}
-        >
+        <div className="flex items-center gap-px shrink-0">
           {hasExternalChanges ? (
             <Tooltip
               content={`External changes detected (${mod}${isMac ? "" : "+"}R to refresh)`}
@@ -2431,10 +2440,12 @@ export function Editor({
         </div>
       </div>
 
+      {!zenMode && <NoteMetaBar className="shrink-0" />}
+
       {/* Format Bar – transition only after initial mount to avoid height animation on note load */}
       <div
         data-format-bar
-        className={`${focusMode || sourceMode ? "opacity-0 max-h-0 overflow-hidden pointer-events-none" : "opacity-100 max-h-20"} ${hasTransitioned ? `transition-all duration-400 ${needsSidebarDelay ? "delay-200" : ""}` : ""}`}
+        className={`${zenMode || sourceMode ? "opacity-0 max-h-0 overflow-hidden pointer-events-none" : "opacity-100 max-h-20"} ${hasTransitioned ? `transition-all duration-400 ${delayChrome ? "delay-200" : ""}` : ""}`}
       >
         <FormatBar
           editor={editor}
@@ -2446,7 +2457,7 @@ export function Editor({
 
       {/* Editor content area with resize handles overlay */}
       <div data-editor-content-area className="flex-1 relative overflow-hidden">
-        {!focusMode && !sourceMode && (
+        {!zenMode && !sourceMode && (
           <EditorWidthHandles containerRef={scrollContainerRef} />
         )}
         <div
@@ -2600,90 +2611,34 @@ export function Editor({
                     });
                     const isFirstRow = rowIndex === 0;
 
-                    const menuItems = [];
-
-                    // Only show "Add Column Before" if not in first column
-                    if (!isFirstColumn) {
-                      menuItems.push(
-                        await MenuItem.new({
-                          text: "Add Column Before",
-                          action: () =>
-                            editor.chain().focus().addColumnBefore().run(),
-                        }),
-                      );
-                    }
-                    menuItems.push(
-                      await MenuItem.new({
-                        text: "Add Column After",
-                        action: () =>
-                          editor.chain().focus().addColumnAfter().run(),
-                      }),
-                    );
-                    menuItems.push(
-                      await MenuItem.new({
-                        text: "Delete Column",
-                        action: () =>
-                          editor.chain().focus().deleteColumn().run(),
-                      }),
-                    );
-                    menuItems.push(
-                      await PredefinedMenuItem.new({ item: "Separator" }),
-                    );
-
-                    // Only show "Add Row Above" if not in first row
-                    if (!isFirstRow) {
-                      menuItems.push(
-                        await MenuItem.new({
-                          text: "Add Row Above",
-                          action: () =>
-                            editor.chain().focus().addRowBefore().run(),
-                        }),
-                      );
-                    }
-                    menuItems.push(
-                      await MenuItem.new({
-                        text: "Add Row Below",
-                        action: () =>
-                          editor.chain().focus().addRowAfter().run(),
-                      }),
-                    );
-                    menuItems.push(
-                      await MenuItem.new({
-                        text: "Delete Row",
-                        action: () => editor.chain().focus().deleteRow().run(),
-                      }),
-                    );
-                    menuItems.push(
-                      await PredefinedMenuItem.new({ item: "Separator" }),
-                    );
-                    menuItems.push(
-                      await MenuItem.new({
-                        text: "Toggle Header Row",
-                        action: () =>
-                          editor.chain().focus().toggleHeaderRow().run(),
-                      }),
-                    );
-                    menuItems.push(
-                      await MenuItem.new({
-                        text: "Toggle Header Column",
-                        action: () =>
-                          editor.chain().focus().toggleHeaderColumn().run(),
-                      }),
-                    );
-                    menuItems.push(
-                      await PredefinedMenuItem.new({ item: "Separator" }),
-                    );
-                    menuItems.push(
-                      await MenuItem.new({
-                        text: "Delete Table",
-                        action: () =>
-                          editor.chain().focus().deleteTable().run(),
-                      }),
-                    );
-
-                    const menu = await Menu.new({ items: menuItems });
-
-                    await menu.popup();
+                    const close = () => setTableContextMenu(null);
+                    const item = (id: string, label: string, command: () => boolean) => ({
+                      id,
+                      label,
+                      run: () => {
+                        command();
+                        close();
+                      },
+                    });
+                    const actions = [
+                      ...(!isFirstColumn
+                        ? [item("col-before", "Add Column Before", () => editor.chain().focus().addColumnBefore().run())]
+                        : []),
+                      item("col-after", "Add Column After", () => editor.chain().focus().addColumnAfter().run()),
+                      item("col-delete", "Delete Column", () => editor.chain().focus().deleteColumn().run()),
+                      { id: "sep-1", label: "", separator: true },
+                      ...(!isFirstRow
+                        ? [item("row-before", "Add Row Above", () => editor.chain().focus().addRowBefore().run())]
+                        : []),
+                      item("row-after", "Add Row Below", () => editor.chain().focus().addRowAfter().run()),
+                      item("row-delete", "Delete Row", () => editor.chain().focus().deleteRow().run()),
+                      { id: "sep-2", label: "", separator: true },
+                      item("header-row", "Toggle Header Row", () => editor.chain().focus().toggleHeaderRow().run()),
+                      item("header-col", "Toggle Header Column", () => editor.chain().focus().toggleHeaderColumn().run()),
+                      { id: "sep-3", label: "", separator: true },
+                      item("delete-table", "Delete Table", () => editor.chain().focus().deleteTable().run()),
+                    ];
+                    setTableContextMenu({ x: e.clientX, y: e.clientY, actions });
                   } catch (err) {
                     console.error("Table context menu error:", err);
                   }
@@ -2695,6 +2650,37 @@ export function Editor({
           )}
         </div>
       </div>
+      {tableContextMenu && (
+        <div
+          className="fixed inset-0 z-50"
+          onMouseDown={() => setTableContextMenu(null)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setTableContextMenu(null);
+          }}
+        >
+          <div
+            className="absolute min-w-44 bg-bg border border-border rounded-md shadow-lg py-1"
+            style={{ left: tableContextMenu.x, top: tableContextMenu.y }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            {tableContextMenu.actions.map((action) =>
+              action.separator ? (
+                <div key={action.id} className="h-px bg-border my-1" />
+              ) : (
+                <button
+                  key={action.id}
+                  type="button"
+                  className="block w-full text-left px-3 py-1.5 text-sm text-text hover:bg-bg-muted"
+                  onClick={action.run}
+                >
+                  {action.label}
+                </button>
+              ),
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

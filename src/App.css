@@ -130,15 +130,6 @@ body,
   border-top: 1px solid var(--color-border);
 }
 
-/* macOS transparent title bar support */
-.titlebar-drag-region {
-  -webkit-app-region: drag;
-}
-
-.titlebar-no-drag {
-  -webkit-app-region: no-drag;
-}
-
 body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
@@ -1120,7 +1111,6 @@ table.not-prose th {
   }
 
   /* Hide all UI elements - only show editor content */
-  [data-tauri-drag-region],
   button,
   .dropdown,
   .tooltip,
@@ -1136,7 +1126,6 @@ table.not-prose th {
   }
 
   /* Hide toolbar and format bar when printing */
-  [data-tauri-drag-region],
   [data-format-bar] {
     display: none !important;
   }

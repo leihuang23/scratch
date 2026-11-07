@@ -2,27 +2,29 @@
 
 ## Project Overview
 
-Scratch is a cross-platform markdown note-taking app for macOS, Windows, and Linux, built with Tauri v2 (Rust backend) + React/TypeScript/Tailwind (frontend) + TipTap (WYSIWYG editor) + Tantivy (full-text search).
+Scratch is a local markdown note-taking app. The UI is a React/TypeScript/Tailwind PWA with a TipTap editor. A loopback Node server owns the notes folder, search, git, and file watching.
 
 ## Commands
 
 ```bash
-npm run dev          # Start Vite dev server only
-npm run build        # Build frontend (tsc + vite)
-npm run tauri dev    # Run full app in development mode
-npm run tauri build  # Build production app
+npm run dev          # API on 127.0.0.1:4173 plus Vite on localhost:1420
+npm run build        # Typecheck and build the frontend into dist/
+npm start            # Serve dist/ and the API from the Node server
 ```
+
+`npm run dev:pwa` and `npm run server` are the same two entry points.
 
 ## CI
 
-Runs on every push to `main` and on PRs. Validates frontend build (`tsc` + Vite) and Rust compilation (`cargo check` + `cargo clippy`) on an Ubuntu runner.
+Runs on every push to `main` and on PRs. Validates `npm ci` and `npm run build` (`tsc` + Vite) on an Ubuntu runner.
 
 ## Key Patterns
 
-- All backend operations go through Tauri commands in `src-tauri/src/lib.rs`. Frontend calls them via `invoke()` from `@tauri-apps/api/core`.
+- Frontend calls go through `invoke()` in `src/platform/index.ts`. That posts to `/api/command`. The Node handlers live in `server/index.mjs`.
+- File changes arrive on `GET /api/events` (`file-change`, `select-note`).
 - `NotesContext` uses a dual context pattern (data/actions separated) for performance.
-- Settings live in two places: app config at `{APP_DATA}/config.json`, per-folder settings at `{NOTES_FOLDER}/.scratch/settings.json`.
-- Tauri v2 permissions go in `src-tauri/capabilities/default.json`.
+- App config is `~/.scratch-server/config.json` (`SCRATCH_SERVER_HOME` overrides the directory). Per-folder settings stay at `{NOTES_FOLDER}/.scratch/settings.json`.
+- The browser session cookie is `scratch_token`, set by `GET /api/session`. Vite injects `x-scratch-token` when it proxies `/api`.
 
 ## Coding Conventions
 
@@ -38,8 +40,7 @@ Runs on every push to `main` and on PRs. Validates frontend build (`tsc` + Vite)
 
 ## Releasing
 
-1. Bump version in `package.json` and `src-tauri/tauri.conf.json`
+1. Bump the version in `package.json`
 2. Commit to `main`, then tag and push: `git tag v0.5.0 && git push origin v0.5.0`
-3. The release workflow builds all platforms and creates a draft GitHub release
-4. Update the description in `latest.json` from GitHub after the action finishes
-5. Review, edit notes, and publish
+3. The release workflow builds `dist/` and uploads a draft GitHub release
+4. Review, edit notes, and publish

@@ -37,7 +37,7 @@ export function SidebarResizeHandle() {
     persistedWidthRef.current = sidebarWidthPx;
   }, [sidebarWidthPx]);
 
-  // If unmounted mid-drag (e.g. focus mode toggled via shortcut), restore the
+  // If unmounted mid-drag (e.g. zen mode toggled via shortcut), restore the
   // transition class and the persisted width so the live drag value doesn't stick
   useEffect(
     () => () => {

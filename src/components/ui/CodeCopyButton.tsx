@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../platform";
 import { CheckIcon, CopyIcon } from "../icons";
 import { cn } from "../../lib/utils";
 

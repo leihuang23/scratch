@@ -1,9 +1,39 @@
+export type NoteStatus = "active" | "on-hold" | "completed" | "dropped";
+
 export interface NoteMetadata {
   id: string;
   title: string;
   preview: string;
   modified: number;
+  /** Notebook path; empty string means the vault root (Inbox). */
+  book: string;
+  tags: string[];
+  /** Effective status: explicit override or derived from todo items. */
+  status: NoteStatus;
+  /** Manual override, null when the status is derived from content. */
+  explicitStatus: NoteStatus | null;
+  todoOpen: number;
+  todoDone: number;
 }
+
+export interface TrashEntry {
+  key: string;
+  id: string;
+  title: string;
+  preview: string;
+  book: string;
+  modified: number;
+  trashedAt: number;
+  status: NoteStatus | null;
+  tags: string[];
+}
+
+export type NoteFilter =
+  | { type: "all" }
+  | { type: "notebook"; path: string }
+  | { type: "status"; status: NoteStatus }
+  | { type: "tag"; tag: string }
+  | { type: "trash" };
 
 export interface Note {
   id: string;
@@ -56,7 +86,6 @@ export interface Settings {
   sidebarWidthPx?: number;
   defaultNoteName?: string;
   interfaceZoom?: number;
-  ollamaModel?: string;
   ignoredPatterns?: string[];
   customColorsLight?: CustomColors;
   customColorsDark?: CustomColors;

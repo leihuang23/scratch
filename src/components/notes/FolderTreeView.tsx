@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../ui";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../platform";
 import {
   ChevronRightIcon,
   ChevronDownIcon,
@@ -972,10 +972,9 @@ export function FolderTreeView({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete note?</AlertDialogTitle>
+            <AlertDialogTitle>Move note to trash?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the note and all its content. This
-              action cannot be undone.
+              The note will be moved to the trash. You can restore it later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -987,7 +986,7 @@ export function FolderTreeView({
                 handleNoteDeleteConfirm();
               }}
             >
-              {isDeleting ? "Deleting…" : "Delete"}
+              {isDeleting ? "Moving…" : "Move to Trash"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

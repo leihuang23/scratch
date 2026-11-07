@@ -8,7 +8,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "../platform";
 import * as gitService from "../services/git";
 import * as notesService from "../services/notes";
 import type { GitStatus } from "../services/git";

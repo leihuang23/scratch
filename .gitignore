@@ -23,12 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 
-# Rust / Tauri
-src-tauri/target/
-src-tauri/gen/
-
 # Build secrets
 .env.build
 
-# Release artifacts
-latest.json
+# Local planning artifacts
+.lavish/

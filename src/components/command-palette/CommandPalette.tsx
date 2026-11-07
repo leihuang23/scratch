@@ -7,13 +7,12 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../platform";
 import { toast } from "sonner";
 import { useNotes } from "../../context/NotesContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useGit } from "../../context/GitContext";
 import * as notesService from "../../services/notes";
-import * as aiService from "../../services/ai";
 import { downloadPdf, downloadMarkdown } from "../../services/pdf";
 import type { Settings } from "../../types/note";
 import type { Editor } from "@tiptap/react";
@@ -41,18 +40,13 @@ import {
   AddNoteIcon,
   TrashIcon,
   PinIcon,
-  ClaudeIcon,
   ZenIcon,
   MarkdownIcon,
-  CodexIcon,
-  OpenCodeIcon,
-  OllamaIcon,
   FolderIcon,
   FolderPlusIcon,
   KeyboardIcon,
 } from "../icons";
 import { mod, shift } from "../../lib/platform";
-import type { AiProvider } from "../../services/ai";
 
 interface Command {
   id: string;
@@ -67,9 +61,8 @@ interface CommandPaletteProps {
   onClose: () => void;
   onOpenSettings?: () => void;
   onOpenShortcuts?: () => void;
-  onOpenAiModal?: (provider: AiProvider) => void;
-  focusMode?: boolean;
-  onToggleFocusMode?: () => void;
+  zenMode?: boolean;
+  onToggleZenMode?: () => void;
   editorRef?: React.RefObject<Editor | null>;
 }
 
@@ -78,9 +71,8 @@ export function CommandPalette({
   onClose,
   onOpenSettings,
   onOpenShortcuts,
-  onOpenAiModal,
-  focusMode,
-  onToggleFocusMode,
+  zenMode,
+  onToggleZenMode,
   editorRef,
 }: CommandPaletteProps) {
   const {
@@ -104,9 +96,6 @@ export function CommandPalette({
     { id: string; title: string; preview: string; modified: number }[]
   >([]);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [availableAiProviders, setAvailableAiProviders] = useState<
-    AiProvider[]
-  >([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -115,32 +104,6 @@ export function CommandPalette({
     if (open) {
       notesService.getSettings().then(setSettings);
     }
-  }, [open, currentNote?.id]);
-
-  useEffect(() => {
-    if (!open || !currentNote) {
-      setAvailableAiProviders([]);
-      return;
-    }
-
-    let active = true;
-    aiService
-      .getAvailableAiProviders()
-      .then((providers) => {
-        if (active) {
-          setAvailableAiProviders(providers);
-        }
-      })
-      .catch((error) => {
-        if (active) {
-          console.error("Failed to discover AI providers:", error);
-          setAvailableAiProviders([]);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
   }, [open, currentNote?.id]);
 
   // Memoize commands array
@@ -172,50 +135,6 @@ export function CommandPalette({
     if (currentNote) {
       const isPinned =
         settings?.pinnedNoteIds?.includes(currentNote.id) || false;
-      const aiCommands: Command[] = onOpenAiModal
-        ? availableAiProviders.map((provider) => {
-            const action = () => {
-              onOpenAiModal(provider);
-              onClose();
-            };
-
-            if (provider === "codex") {
-              return {
-                id: "ai-edit-codex",
-                label: "Edit with OpenAI Codex",
-                icon: <CodexIcon className="w-4.5 h-4.5 fill-text-muted" />,
-                action,
-              };
-            }
-
-            if (provider === "opencode") {
-              return {
-                id: "ai-edit-opencode",
-                label: "Edit with OpenCode",
-                icon: (
-                  <OpenCodeIcon className="w-4.5 h-4.5 fill-text-muted" />
-                ),
-                action,
-              };
-            }
-
-            if (provider === "ollama") {
-              return {
-                id: "ai-edit-ollama",
-                label: "Edit with Ollama",
-                icon: <OllamaIcon className="w-4.5 h-4.5 fill-text-muted" />,
-                action,
-              };
-            }
-
-            return {
-              id: "ai-edit-claude",
-              label: "Edit with Claude Code",
-              icon: <ClaudeIcon className="w-4.5 h-4.5 fill-text-muted" />,
-              action,
-            };
-          })
-        : [];
 
       baseCommands.push(
         {
@@ -236,7 +155,6 @@ export function CommandPalette({
             }
           },
         },
-        ...aiCommands,
         {
           id: "duplicate-note",
           label: "Duplicate Current Note",
@@ -408,15 +326,15 @@ export function CommandPalette({
       }
     }
 
-    // Focus mode and source toggle
+    // Zen mode and source toggle
     baseCommands.push(
       {
-        id: "focus-mode",
-        label: focusMode ? "Exit Focus Mode" : "Enter Focus Mode",
+        id: "zen-mode",
+        label: zenMode ? "Exit Zen Mode" : "Enter Zen Mode",
         shortcut: `${mod} ${shift} Enter`,
         icon: <ZenIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
         action: () => {
-          onToggleFocusMode?.();
+          onToggleZenMode?.();
           onClose();
         },
       },
@@ -508,8 +426,6 @@ export function CommandPalette({
     deleteNote,
     onClose,
     onOpenSettings,
-    onOpenAiModal,
-    availableAiProviders,
     setTheme,
     gitEnabled,
     gitAvailable,
@@ -522,8 +438,8 @@ export function CommandPalette({
     settings,
     pinNote,
     unpinNote,
-    focusMode,
-    onToggleFocusMode,
+    zenMode,
+    onToggleZenMode,
     notesFolder,
     onOpenShortcuts,
   ]);
@@ -768,16 +684,15 @@ export function CommandPalette({
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete note?</AlertDialogTitle>
+            <AlertDialogTitle>Move note to trash?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the note and all its content. This
-              action cannot be undone.
+              The note will be moved to the trash. You can restore it later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteConfirm}>
-              Delete
+              Move to Trash
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

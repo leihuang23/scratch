@@ -3,6 +3,8 @@ import { type ButtonHTMLAttributes, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 import { Tooltip } from "./Tooltip";
 import { PinIcon } from "../icons";
+import { StatusIcon } from "./StatusIcon";
+import type { NoteStatus } from "../../types/note";
 
 // Re-export components
 export {
@@ -16,6 +18,7 @@ export { Button } from "./Button";
 export { CodeCopyButton } from "./CodeCopyButton";
 export { Input } from "./Input";
 export { Select } from "./Select";
+export { StatusIcon } from "./StatusIcon";
 export { Toaster } from "./Toaster";
 export {
   AlertDialog,
@@ -135,8 +138,10 @@ interface ListItemProps {
   meta?: string;
   isSelected?: boolean;
   isPinned?: boolean;
+  /** Status rendered as a colored icon before the title. */
+  status?: NoteStatus;
+  tags?: string[];
   onClick?: () => void;
-  /** Optional status icon to display next to meta */
 }
 
 export function ListItem({
@@ -145,6 +150,8 @@ export function ListItem({
   meta,
   isSelected = false,
   isPinned = false,
+  status,
+  tags,
   onClick,
   onContextMenu,
 }: ListItemProps & { onContextMenu?: (e: React.MouseEvent) => void }) {
@@ -174,6 +181,7 @@ export function ListItem({
           {isPinned && (
             <PinIcon className="w-4.25 h-4.25 stroke-[1.6] fill-current text-text-muted shrink-0" />
           )}
+          {status && <StatusIcon status={status} />}
           <span className={cn("text-sm font-medium truncate text-text")}>
             {title}
           </span>
@@ -200,6 +208,23 @@ export function ListItem({
           {hasSubtitle ? cleanSubtitle : "\u00A0"}
         </p>
       </div>
+      {tags && tags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 mt-0.5">
+          {tags.slice(0, 3).map((tag) => (
+            <span
+              key={tag}
+              className="text-[10px] leading-none text-text-muted bg-bg-emphasis px-1.5 py-0.5 rounded"
+            >
+              {tag}
+            </span>
+          ))}
+          {tags.length > 3 && (
+            <span className="text-[10px] leading-none text-text-muted">
+              +{tags.length - 3}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

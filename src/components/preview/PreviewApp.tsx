@@ -1,6 +1,4 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { toast } from "sonner";
 import { Editor, type PreviewModeData } from "../editor/Editor";
 import * as filesService from "../../services/files";
@@ -15,7 +13,7 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
   const [modified, setModified] = useState(0);
   const [hasExternalChanges, setHasExternalChanges] = useState(false);
   const [reloadVersion, setReloadVersion] = useState(0);
-  const [focusMode, setFocusMode] = useState(false);
+  const [zenMode, setZenMode] = useState(false);
   const recentlySavedRef = useRef(false);
 
   // Load file on mount
@@ -84,25 +82,15 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
     }
   }, [filePath]);
 
-  // Listen for preview-file-change events
-  useEffect(() => {
-    const unlisten = listen<string>("preview-file-change", () => {
-      setHasExternalChanges(true);
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, []);
-
   // Keyboard shortcuts for preview mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const modKey = e.metaKey || e.ctrlKey;
 
-      // Cmd+Shift+Enter: Toggle focus mode
+      // Cmd+Shift+Enter: Toggle zen mode
       if (modKey && e.shiftKey && e.key === "Enter") {
         e.preventDefault();
-        setFocusMode((prev) => !prev);
+        setZenMode((prev) => !prev);
         return;
       }
 
@@ -133,10 +121,10 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
         return;
       }
 
-      // Escape: Exit focus mode
-      if (e.key === "Escape" && focusMode) {
+      // Escape: Exit zen mode
+      if (e.key === "Escape" && zenMode) {
         e.preventDefault();
-        setFocusMode(false);
+        setZenMode(false);
         return;
       }
 
@@ -152,7 +140,7 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [focusMode, reload]);
+  }, [zenMode, reload]);
 
   const [isSaving, setIsSaving] = useState(false);
   const savingRef = useRef(false);
@@ -163,8 +151,7 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
     setIsSaving(true);
     try {
       await filesService.importFileToFolder(filePath);
-      // Backend emits select-note + focuses main window; close this preview
-      await getCurrentWindow().close();
+      window.location.assign("/");
     } catch (error) {
       console.error("Failed to save to folder:", error);
       toast.error(`Failed to save to folder: ${error}`);
@@ -188,7 +175,7 @@ export function PreviewApp({ filePath }: PreviewAppProps) {
   return (
     <div className="h-full min-h-0 flex flex-col bg-bg text-text">
       <Editor
-        focusMode={focusMode}
+        zenMode={zenMode}
         previewMode={previewData}
         onSaveToFolder={handleSaveToFolder}
         saveToFolderDisabled={isSaving}

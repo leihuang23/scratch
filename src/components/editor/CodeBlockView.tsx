@@ -1,8 +1,11 @@
-import { useCallback, useState } from "react";
+import { lazy, Suspense, useCallback, useState } from "react";
 import { NodeViewWrapper, NodeViewContent } from "@tiptap/react";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { SUPPORTED_LANGUAGES } from "./lowlight";
-import { MermaidRenderer } from "./MermaidRenderer";
+
+const MermaidRenderer = lazy(() =>
+  import("./MermaidRenderer").then((m) => ({ default: m.MermaidRenderer })),
+);
 import { ChevronDownIcon, PencilIcon, EyeIcon } from "../icons";
 import { CodeCopyButton } from "../ui";
 
@@ -70,7 +73,15 @@ export function CodeBlockView({ node, updateAttributes }: ReactNodeViewProps) {
           contentEditable={false}
           className="mermaid-preview rounded-lg bg-bg-muted p-4 my-1"
         >
-          <MermaidRenderer code={codeContent} />
+          <Suspense
+            fallback={
+              <div className="text-xs text-text-muted italic px-2 pt-6 pb-3 text-center">
+                Rendering diagram
+              </div>
+            }
+          >
+            <MermaidRenderer code={codeContent} />
+          </Suspense>
         </div>
         {/* Hidden but present for TipTap content tracking */}
         <div

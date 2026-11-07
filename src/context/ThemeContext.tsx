@@ -6,7 +6,7 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../platform";
 import { getSettings, updateSettings } from "../services/notes";
 import { SIDEBAR_MIN_PX, SIDEBAR_MAX_PX } from "../lib/sidebar";
 import type {
