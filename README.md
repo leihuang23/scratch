@@ -4,6 +4,8 @@
 
 A minimalist, local-first markdown note-taking app. The UI is a PWA. A loopback Node server keeps the notes on this machine.
 
+> **Fork:** This is a personal fork of [erictli/scratch](https://github.com/erictli/scratch). It replaces the original Tauri desktop shell with a loopback Node server and a PWA frontend. The Website and Releases links point to the upstream project.
+
 ![macOS](https://img.shields.io/badge/platform-macOS-lightgrey) ![Windows](https://img.shields.io/badge/platform-Windows-blue) ![Linux](https://img.shields.io/badge/platform-Linux-orange)
 
 [Website](https://www.ericli.io/scratch) · [Releases](https://github.com/erictli/scratch/releases)
