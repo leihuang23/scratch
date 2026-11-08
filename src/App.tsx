@@ -18,6 +18,7 @@ import { SpinnerIcon } from "./components/icons";
 import { KeyboardShortcutsModal } from "./components/shortcuts/KeyboardShortcutsModal";
 import { PreviewApp } from "./components/preview/PreviewApp";
 import { isMac, isWindows } from "./lib/platform";
+import { requestSearchHighlight } from "./lib/searchHighlight";
 
 // Detect preview mode from URL search params
 function getWindowMode(): {
@@ -300,7 +301,9 @@ function AppContent() {
             currentIndex > 0 ? currentIndex - 1 : displayItems.length - 1;
         }
 
-        selectNote(displayItems[newIndex].id);
+        const nextNoteId = displayItems[newIndex].id;
+        void selectNote(nextNoteId);
+        requestSearchHighlight(nextNoteId, searchQuery);
         window.dispatchEvent(new CustomEvent("focus-note-list"));
         return;
       }
@@ -350,6 +353,7 @@ function AppContent() {
     duplicateNote,
     displayItems,
     reloadCurrentNote,
+    searchQuery,
     selectedNoteId,
     selectNote,
     toggleSettings,

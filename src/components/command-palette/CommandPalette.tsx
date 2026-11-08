@@ -29,6 +29,7 @@ import {
 } from "../ui";
 import { cleanTitle } from "../../lib/utils";
 import { plainTextFromMarkdown } from "../../lib/plainText";
+import { requestSearchHighlight } from "../../lib/searchHighlight";
 import { duplicateNote } from "../../services/notes";
 import {
   CopyIcon,
@@ -514,12 +515,13 @@ export function CommandPalette({
         label: cleanTitle(note.title),
         preview: note.preview,
         action: () => {
-          selectNote(note.id);
+          void selectNote(note.id);
+          requestSearchHighlight(note.id, query);
           onClose();
         },
       })),
     ],
-    [filteredNotes, filteredCommands, selectNote, onClose],
+    [filteredNotes, filteredCommands, selectNote, onClose, query],
   );
 
   // Reset state when opened

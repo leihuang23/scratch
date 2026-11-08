@@ -19,6 +19,7 @@ import type {
 import * as notesService from "../services/notes";
 import type { SearchResult } from "../services/notes";
 import { matchesFilter } from "../lib/library";
+import { cancelSearchHighlight } from "../lib/searchHighlight";
 import { toast } from "sonner";
 
 // Separate contexts to prevent unnecessary re-renders
@@ -152,6 +153,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
   }, [refreshNotes]);
 
   const selectNote = useCallback(async (id: string) => {
+    cancelSearchHighlight();
     const requestId = ++selectRequestIdRef.current;
     // Captured before the optimistic selection so a failed read can restore it.
     const previousSelectedId = selectedNoteIdRef.current;
@@ -199,6 +201,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const createNote = useCallback(async () => {
+    cancelSearchHighlight();
     try {
       // Prefer the open notebook, otherwise the selected note's folder.
       let targetFolder: string | undefined;

@@ -14,6 +14,7 @@ import {
   AlertDialogTitle,
 } from "../ui";
 import { cleanTitle } from "../../lib/utils";
+import { requestSearchHighlight } from "../../lib/searchHighlight";
 import * as notesService from "../../services/notes";
 import { FolderTreeView } from "./FolderTreeView";
 import { TrashList } from "./TrashList";
@@ -343,6 +344,16 @@ export function NoteList({
   const foldersEnabled = settings?.foldersEnabled === true;
   const isSearching = searchQuery.trim().length > 0;
 
+  const handleSelectNote = useCallback(
+    (id: string) => {
+      void selectNote(id);
+      if (searchQuery.trim()) {
+        requestSearchHighlight(id, searchQuery);
+      }
+    },
+    [selectNote, searchQuery],
+  );
+
   if (isLoading && notes.length === 0) {
     return (
       <div className="p-4 text-center text-text-muted select-none">
@@ -428,7 +439,7 @@ export function NoteList({
             isPinned={pinnedIds.has(item.id)}
             status={item.status}
             tags={item.tags}
-            onSelect={selectNote}
+            onSelect={handleSelectNote}
             onPin={pinNote}
             onUnpin={unpinNote}
             onDuplicate={duplicateNote}

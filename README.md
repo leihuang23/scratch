@@ -26,6 +26,7 @@ A minimalist, local-first markdown note-taking app. The UI is a PWA. A loopback 
 - **External edits** - Detects file changes made outside the app
 - **Folders** - Opt-in collapsible folder tree with drag-and-drop to organize notes
 - **Notebooks, status, and tags** - Library panel filters notes by notebook (Inbox plus nested folders), status, and tag
+- **Search** - Full-text search across notes; opening a result jumps to the first match and highlights every occurrence
 - **Trash** - Deletes move to Trash so they can be restored or permanently removed
 - **Keyboard optimized** - Lots of shortcuts and a command palette
 - **Customizable** - Theme, typography, page width, and RTL text direction

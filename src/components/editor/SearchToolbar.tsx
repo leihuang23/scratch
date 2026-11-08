@@ -27,6 +27,7 @@ interface SearchToolbarProps {
   onReplaceAll: () => void;
   isReplaceOpen: boolean;
   onToggleReplace: () => void;
+  autoFocus?: boolean;
 }
 
 export function SearchToolbar({
@@ -44,12 +45,15 @@ export function SearchToolbar({
   onReplaceAll,
   isReplaceOpen,
   onToggleReplace,
+  autoFocus = true,
 }: SearchToolbarProps) {
-  // Auto-focus input on mount
+  // Focus the input when opened explicitly, but not when opened by a search
+  // result click so keyboard navigation in the note list keeps working.
   useEffect(() => {
+    if (!autoFocus) return;
     const frame = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [inputRef]);
+  }, [autoFocus, inputRef]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {

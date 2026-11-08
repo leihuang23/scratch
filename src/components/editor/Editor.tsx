@@ -68,6 +68,11 @@ import { EditorWidthHandles } from "./EditorWidthHandle";
 import { ScratchBlockMath, normalizeBlockMath } from "./MathExtensions";
 import { cn } from "../../lib/utils";
 import { plainTextFromMarkdown } from "../../lib/plainText";
+import {
+  SEARCH_HIGHLIGHT_CANCEL_EVENT,
+  SEARCH_HIGHLIGHT_EVENT,
+  type SearchHighlightDetail,
+} from "../../lib/searchHighlight";
 import { Button, IconButton, ToolbarButton, Tooltip } from "../ui";
 import * as notesService from "../../services/notes";
 import { downloadPdf, downloadMarkdown } from "../../services/pdf";
@@ -618,6 +623,7 @@ export function Editor({
   } | null>(null);
   // Search state
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchAutoFocus, setSearchAutoFocus] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [replaceQuery, setReplaceQuery] = useState("");
   const [isReplaceOpen, setIsReplaceOpen] = useState(false);
@@ -626,6 +632,11 @@ export function Editor({
   >([]);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // Query to apply once a search-result note finishes loading in the editor.
+  const pendingSearchHighlightRef = useRef<{
+    noteId: string;
+    query: string;
+  } | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
   const linkPopupRef = useRef<TippyInstance | null>(null);
   const blockMathPopupRef = useRef<TippyInstance | null>(null);
@@ -1234,7 +1245,7 @@ export function Editor({
                   { base64Data: base64 },
                 );
 
-                // Get notes folder and construct absolute path using Tauri's join
+                // Get notes folder and construct absolute path
                 const notesFolder = await invoke<string>("get_notes_folder");
                 const assetUrl = await resolveAssetUrl(notesFolder, relativePath);
 
@@ -1313,6 +1324,67 @@ export function Editor({
   const lastSaveRef = useRef<{ noteId: string; content: string } | null>(null);
   // Track reloadVersion to detect manual refreshes
   const lastReloadVersionRef = useRef(0);
+
+  // Apply a search query to the note and scroll the first match into view.
+  const applySearchHighlight = useCallback(
+    (query: string, editorInstance: TiptapEditor | null) => {
+      const trimmed = query.trim();
+      if (!editorInstance || !trimmed) return;
+
+      setSearchAutoFocus(false);
+      setSearchOpen(true);
+      setReplaceQuery("");
+      setIsReplaceOpen(false);
+      setSearchQuery(trimmed);
+
+      const matches = findMatches(trimmed, editorInstance);
+      setSearchMatches(matches);
+      setCurrentMatchIndex(0);
+      updateSearchDecorations(matches, 0, editorInstance);
+    },
+    [findMatches, updateSearchDecorations],
+  );
+
+  // Highlight matches when a note is opened from a search result.
+  useEffect(() => {
+    const handleSearchResultOpen = (event: Event) => {
+      const detail = (event as CustomEvent<SearchHighlightDetail>).detail;
+      if (!detail?.noteId || !detail.query?.trim()) return;
+
+      if (
+        currentNote?.id === detail.noteId &&
+        editor &&
+        loadedNoteIdRef.current === detail.noteId
+      ) {
+        applySearchHighlight(detail.query, editor);
+      } else {
+        pendingSearchHighlightRef.current = {
+          noteId: detail.noteId,
+          query: detail.query,
+        };
+      }
+    };
+
+    const handleSearchHighlightCancel = () => {
+      pendingSearchHighlightRef.current = null;
+    };
+
+    window.addEventListener(SEARCH_HIGHLIGHT_EVENT, handleSearchResultOpen);
+    window.addEventListener(
+      SEARCH_HIGHLIGHT_CANCEL_EVENT,
+      handleSearchHighlightCancel,
+    );
+    return () => {
+      window.removeEventListener(
+        SEARCH_HIGHLIGHT_EVENT,
+        handleSearchResultOpen,
+      );
+      window.removeEventListener(
+        SEARCH_HIGHLIGHT_CANCEL_EVENT,
+        handleSearchHighlightCancel,
+      );
+    };
+  }, [currentNote?.id, editor, applySearchHighlight]);
 
   // Notify parent component when editor is ready
   useEffect(() => {
@@ -1587,6 +1659,13 @@ export function Editor({
 
       isLoadingRef.current = false;
 
+      // Apply a pending search-result highlight now that content is loaded.
+      const pendingHighlight = pendingSearchHighlightRef.current;
+      if (pendingHighlight?.noteId === loadingNoteId) {
+        pendingSearchHighlightRef.current = null;
+        applySearchHighlight(pendingHighlight.query, editor);
+      }
+
       if (consumePendingNewNote?.(loadingNoteId)) {
         if (!focusAndSelectTitle(editor)) {
           editor.commands.focus("start");
@@ -1612,6 +1691,7 @@ export function Editor({
     flushPendingSave,
     reloadVersion,
     consumePendingNewNote,
+    applySearchHighlight,
   ]);
 
   // Scroll to top on mount (e.g., when returning from settings)
@@ -1846,6 +1926,7 @@ export function Editor({
 
   // Open and focus editor search (supports repeated Cmd/Ctrl+F)
   const openEditorSearch = useCallback(() => {
+    setSearchAutoFocus(true);
     setSearchOpen(true);
     requestAnimationFrame(() => {
       searchInputRef.current?.focus();
@@ -2520,6 +2601,7 @@ export function Editor({
                       onReplaceAll={() => replaceAll(replaceQuery)}
                       isReplaceOpen={isReplaceOpen}
                       onToggleReplace={() => setIsReplaceOpen(!isReplaceOpen)}
+                      autoFocus={searchAutoFocus}
                     />
                   </div>
                 </div>
