@@ -3,7 +3,9 @@
 # Double-click in Finder, or symlink it into ~/Applications and launch from there.
 #
 # The app to open is discovered: any Chromium-family app bundle whose
-# CrAppModeShortcutURL points at this server (Chrome, Edge, Brave, Vivaldi, ...).
+# CrAppModeShortcutURL points at this server (Chrome, Edge, Brave, Vivaldi, ...)
+# and whose name is Scratch. Both must match: several apps can share the same
+# origin, so the URL alone may select a different app.
 # Override it with SCRATCH_PWA_BUNDLE, either a bundle path or an identifier
 # such as com.microsoft.edgemac.app.<id>.
 set -uo pipefail
@@ -19,6 +21,7 @@ ROOT="$(cd -P "$(dirname "$src")" && pwd)"
 
 PORT=4173
 ORIGIN="http://127.0.0.1:$PORT"
+APP_NAME="Scratch"
 HEALTH_URL="$ORIGIN/api/health"
 LOG="$HOME/.scratch-server/server.log"
 
@@ -67,6 +70,14 @@ app_url() {
   /usr/bin/plutil -extract CrAppModeShortcutURL raw "$1/Contents/Info.plist" 2>/dev/null
 }
 
+app_name() {
+  local plist="$1/Contents/Info.plist" name
+  name=$(/usr/bin/plutil -extract CFBundleDisplayName raw "$plist" 2>/dev/null)
+  [ -n "$name" ] || name=$(/usr/bin/plutil -extract CFBundleName raw "$plist" 2>/dev/null)
+  [ -n "$name" ] || name="$(basename "$1")"
+  printf '%s\n' "${name%.app}"
+}
+
 # Several browsers may have installed the same app; lowest rank wins.
 app_rank() {
   local id
@@ -79,13 +90,15 @@ app_rank() {
 }
 
 find_pwa() {
-  local app url root rank best="" best_rank=99
+  local app url name root rank best="" best_rank=99
   while IFS= read -r app; do
     url="$(app_url "$app")" || continue
     case "${url%/}" in
       "$ORIGIN" | "http://localhost:$PORT") ;;
       *) continue ;;
     esac
+    name="$(app_name "$app")"
+    [ "$name" = "$APP_NAME" ] || continue
     rank="$(app_rank "$app")"
     if [ "$rank" -lt "$best_rank" ]; then
       best="$app"
